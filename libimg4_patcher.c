@@ -131,44 +131,91 @@ int get_signature_check_patch(void *libimg4, size_t len) {
 
     printf("[*] firmware authenticated xref at 0x%llx\n", (int64_t) ref_firm_auth);
 
+    addr_t current_addr = 0;
+    //searching for next unconditional branch instruction 'b'
+    current_addr = step64(libimg4, ref_firm_auth, 40, 0x14000000, 0xFC000000);
 
-    //searching for next ret
-    addr_t current_addr = step64(libimg4, ref_firm_auth, 128, 0xd65f0000, 0xffff0000);
+    if (current_addr) {
+        printf("[*] next b at 0x%llx\n", (int64_t) current_addr);
 
-    if(!current_addr) {
-    	exception();
+        //go to the target of the branch instruction
+        int32_t imm = 0;
+        int32_t branch_offset = 0;
+        imm = (*(uint32_t *) (libimg4 + current_addr)) & 0x03FFFFFF;
+        //check for negative offset
+        if ((imm & 0x02000000))
+            imm |= 0xFC000000;
+        branch_offset = imm << 2;
+        current_addr += branch_offset;
+        printf("[*] target offset: 0x%llx\n", current_addr);
+
+        //search for next b.ne (b.cond)
+        current_addr = step64(libimg4, current_addr, 15 * 4, 0x54000000, 0xFF000000);
+
+        if(!current_addr) {
+            exception();
+        }
+
+        printf("[*] next b.cond at 0x%llx\n", (int64_t) current_addr);
+
+        printf("[*] patching b.cond to nop\n");
+
+        *(uint32_t *) (libimg4 + current_addr) = 0xd503201f;
+
+        //searching for next mov (register to register, implemented as orr)
+        current_addr = step64(libimg4, current_addr, 5 * 4, 0xaa0003e0, 0xffc0ffe0);
+
+        if(!current_addr) {
+            exception();
+        }
+
+        printf("[*] next mov at 0x%llx\n", (int64_t) current_addr);
+
+        printf("[*] patching return value to 0\n");
+
+        //mov x0, #0
+        *(uint32_t *) (libimg4 + current_addr) = 0xd2800000;
     }
 
-    printf("[*] next ret at 0x%llx\n", (int64_t) current_addr);
+    //searching for next ret instead (iOS 15)
+    else {
+        current_addr = step64(libimg4, ref_firm_auth, 128, 0xd65f0000, 0xffff0000);
 
-    
-    //searching for previous mov (register to register, implemented as orr)
-    current_addr = step64_back(libimg4, current_addr, 128, 0xaa0003e0, 0xffc0ffe0);
+        if(!current_addr) {
+            exception();
+        }
 
-    if(!current_addr) {
-    	exception();
+        printf("[*] next ret at 0x%llx\n", (int64_t) current_addr);
+
+
+        //searching for previous mov (register to register, implemented as orr)
+        current_addr = step64_back(libimg4, current_addr, 128, 0xaa0003e0, 0xffc0ffe0);
+
+        if(!current_addr) {
+            exception();
+        }
+
+        printf("[*] previous mov at 0x%llx\n", (int64_t) current_addr);
+
+        printf("[*] patching return value to 0\n");
+
+        //mov x0, #0
+        *(uint32_t *) (libimg4 + current_addr) = 0xd2800000;
+
+
+        //searching for previous b.ne
+        current_addr = step64_back(libimg4, current_addr, 128, 0x54000001, 0xff00000f);
+
+        if(!current_addr) {
+            exception();
+        }
+
+        printf("[*] previous b.ne at 0x%llx\n", (int64_t) current_addr);
+
+        printf("[*] patching b.ne to nop\n");
+
+        *(uint32_t *) (libimg4 + current_addr) = 0xd503201f;
     }
-
-    printf("[*] previous mov at 0x%llx\n", (int64_t) current_addr);
-    
-    printf("[*] patching return value to 0\n");
-
-    //mov x0, #0
-    *(uint32_t *) (libimg4 + current_addr) = 0xd2800000;
-
-
-    //searching for previous b.ne
-    current_addr = step64_back(libimg4, current_addr, 128, 0x54000001, 0xff00000f);
-
-    if(!current_addr) {
-    	exception();
-    }
-
-    printf("[*] previous b.ne at 0x%llx\n", (int64_t) current_addr);
-
-    printf("[*] patching b.ne to nop\n");
-
-    *(uint32_t *) (libimg4 + current_addr) = 0xd503201f;
 
     return 0;
 
